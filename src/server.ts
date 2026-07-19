@@ -10,9 +10,14 @@ async function main() {
 
   const app = createApp();
   app.listen(env.PORT, () => {
-    logger.info(`InvoiceGen API listening on port ${env.PORT}`, {
+    const baseUrl = `http://localhost:${env.PORT}`;
+    logger.info(`InvoiceGen API listening on ${baseUrl}`, {
       env: env.NODE_ENV,
     });
+    logger.info(`  GET  ${baseUrl}/`);
+    logger.info(`  GET  ${baseUrl}/health`);
+    logger.info(`  GET  ${baseUrl}/ready`);
+    logger.info(`  API  ${baseUrl}/api/v1`);
   });
 }
 

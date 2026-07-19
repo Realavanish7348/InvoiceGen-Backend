@@ -120,7 +120,7 @@ export async function register(
   const email = input.email.toLowerCase().trim();
   const existing = await User.findOne({ email });
   if (existing) {
-    throw conflict("Unable to register with provided credentials");
+    throw conflict("An account with this email already exists");
   }
 
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_COST);
