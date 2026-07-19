@@ -1,0 +1,30 @@
+import { Router } from "express";
+import { authRouter } from "./modules/auth/auth.routes.js";
+import { usersRouter } from "./modules/users/user.routes.js";
+import { businessProfileRouter } from "./modules/businessProfile/businessProfile.routes.js";
+import { clientsRouter } from "./modules/clients/client.routes.js";
+import { productsRouter } from "./modules/products/product.routes.js";
+import { servicesRouter } from "./modules/services/service.routes.js";
+import { taxRulesRouter } from "./modules/taxRules/taxRule.routes.js";
+import { templatesRouter } from "./modules/templates/template.routes.js";
+import { settingsRouter } from "./modules/settings/settings.routes.js";
+import { invoicesRouter } from "./modules/invoices/invoice.routes.js";
+import { dashboardRouter } from "./modules/dashboard/dashboard.routes.js";
+import { notificationsRouter } from "./modules/notifications/notification.routes.js";
+import { subscriptionsRouter } from "./modules/subscriptions/subscription.routes.js";
+
+export const apiRouter = Router();
+
+apiRouter.use("/auth", authRouter);
+apiRouter.use("/users", usersRouter);
+apiRouter.use("/business-profile", businessProfileRouter);
+apiRouter.use("/clients", clientsRouter);
+apiRouter.use("/products", productsRouter);
+apiRouter.use("/services", servicesRouter);
+apiRouter.use("/tax-rules", taxRulesRouter);
+apiRouter.use("/templates", templatesRouter);
+apiRouter.use("/settings", settingsRouter);
+apiRouter.use("/invoices", invoicesRouter);
+apiRouter.use("/dashboard", dashboardRouter);
+apiRouter.use("/notifications", notificationsRouter);
+apiRouter.use("/subscriptions", subscriptionsRouter);
