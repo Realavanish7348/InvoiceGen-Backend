@@ -51,7 +51,12 @@ export type ProductInput = {
 
 async function assertTaxRuleValid(companyId: string, taxRuleId?: string | null) {
   if (!taxRuleId) return;
-  await assertCompanyOwnership(TaxRule, taxRuleId, companyId);
+  const rule = await TaxRule.findOne({
+    _id: taxRuleId,
+    companyId,
+    isDeleted: false,
+  });
+  if (!rule) throw badRequest("Invalid tax rule");
 }
 
 export async function createProduct(

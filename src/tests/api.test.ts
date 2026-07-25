@@ -4,6 +4,13 @@ import { createApp } from "../app.js";
 
 const app = createApp();
 
+function cookieHeader(
+  value: string | string[] | undefined,
+): string[] | undefined {
+  if (value == null) return undefined;
+  return Array.isArray(value) ? value : [value];
+}
+
 async function register(email: string, name = "Test User") {
   const res = await request(app)
     .post("/api/v1/auth/register")
@@ -15,7 +22,7 @@ async function register(email: string, name = "Test User") {
   return {
     token: res.body.data.accessToken as string,
     user: res.body.data.user,
-    cookies: res.headers["set-cookie"] as string[] | undefined,
+    cookies: cookieHeader(res.headers["set-cookie"]),
   };
 }
 
@@ -57,9 +64,11 @@ describe("auth + single-workspace provisioning", () => {
     expect(login.status).toBe(200);
     expect(login.body.data.accessToken).toBeTruthy();
 
+    const refreshCookies =
+      cookies ?? cookieHeader(login.headers["set-cookie"]) ?? [];
     const refresh = await request(app)
       .post("/api/v1/auth/refresh")
-      .set("Cookie", cookies ?? login.headers["set-cookie"]);
+      .set("Cookie", refreshCookies);
     expect(refresh.status).toBe(200);
     expect(refresh.body.data.accessToken).toBeTruthy();
   });
@@ -140,12 +149,76 @@ describe("invoices", () => {
     expect(published.status).toBe(200);
     expect(published.body.data.status).toBe("published");
 
+    const notesOnly = await request(app)
+      .patch(`/api/v1/invoices/${invoice.body.data._id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ notes: "Thanks for your business" });
+    expect(notesOnly.status).toBe(200);
+    expect(notesOnly.body.data.notes).toBe("Thanks for your business");
+
     const pdf = await request(app)
       .get(`/api/v1/invoices/${invoice.body.data._id}/pdf`)
       .set("Authorization", `Bearer ${token}`);
     expect(pdf.status).toBe(200);
     expect(pdf.headers["content-type"]).toContain("application/pdf");
     expect(pdf.body.length).toBeGreaterThan(100);
+  });
+
+  it("escapes invoice search metacharacters", async () => {
+    const { token } = await register("search@example.com");
+    const res = await request(app)
+      .get("/api/v1/invoices")
+      .query({ search: "(" })
+      .set("Authorization", `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+  });
+});
+
+describe("error contracts", () => {
+  it("rejects invalid taxRuleId with 400", async () => {
+    const { token } = await register("tax@example.com");
+    const res = await request(app)
+      .post("/api/v1/products")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        name: "Widget",
+        unitPrice: 100,
+        taxRuleId: "000000000000000000000000",
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_REQUEST");
+  });
+
+  it("returns CONFIRM_TEXT_MISMATCH for wrong delete confirmation", async () => {
+    const { token } = await register("del@example.com");
+    const res = await request(app)
+      .delete("/api/v1/users/me")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ confirmation: "DELETE" });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("CONFIRM_TEXT_MISMATCH");
+  });
+
+  it("returns INVALID_PLAN for unknown planId", async () => {
+    const { token } = await register("plan@example.com");
+    const res = await request(app)
+      .post("/api/v1/subscriptions/change-plan")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ planId: "enterprise" });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_PLAN");
+  });
+
+  it("returns 400 for malformed JSON", async () => {
+    const { token } = await register("json@example.com");
+    const res = await request(app)
+      .post("/api/v1/clients")
+      .set("Authorization", `Bearer ${token}`)
+      .set("Content-Type", "application/json")
+      .send("{not-json");
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_REQUEST");
   });
 });
 

@@ -7,6 +7,7 @@ import { Settings } from "../settings/settings.model.js";
 import { Subscription, PLAN_DEFINITIONS } from "../subscriptions/subscription.model.js";
 import { calculateInvoiceTotals } from "../../utils/money.js";
 import { assertCompanyOwnership } from "../../utils/ownershipCheck.js";
+import { buildSearchRegex } from "../../utils/pagination.js";
 import { badRequest, conflict, notFound } from "../../utils/AppError.js";
 import { createNotification } from "../../services/notification.service.js";
 import { generateInvoicePdf } from "../../services/pdf.service.js";
@@ -105,9 +106,10 @@ export async function listInvoices(
     };
   }
   if (query.search) {
+    const regex = buildSearchRegex(query.search);
     filter.$or = [
-      { invoiceNumber: new RegExp(query.search, "i") },
-      { "clientSnapshot.name": new RegExp(query.search, "i") },
+      { invoiceNumber: regex },
+      { "clientSnapshot.name": regex },
     ];
   }
 
@@ -264,14 +266,18 @@ export async function updateInvoice(
   const invoice = await assertCompanyOwnership(Invoice, id, companyId);
 
   if (invoice.status !== "draft") {
-    // Published invoices: only non-financial notes fields
+    // Non-draft: only non-financial notes fields
     const allowed = ["notes", "terms", "paymentInstructions", "footer"] as const;
     for (const key of Object.keys(input)) {
       if (!allowed.includes(key as (typeof allowed)[number])) {
         throw badRequest("Published invoices cannot change financial fields");
       }
     }
-    Object.assign(invoice, input);
+    for (const key of allowed) {
+      if (input[key] !== undefined) {
+        invoice[key] = input[key];
+      }
+    }
     await invoice.save();
     return invoice;
   }

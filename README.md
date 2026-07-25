@@ -51,9 +51,20 @@ See the handbook for jobs, env semantics, indexes, deployment constraints, and k
 
 ## Postman
 
-Import `postman/collection.json` and `postman/environment.json`.
+Import `postman/collection.json` and `postman/environment.json` (environment name: **Local Dev**).
 
-The committed collection is a starter subset. Prefer OpenAPI + `docs/API.md` for the full route surface and error scenarios. If you use remote Postman workspaces, reconcile them back into git when coverage expands.
+1. Select the **Local Dev** environment (required — `{{accessToken}}` will not resolve otherwise).
+2. Send **Auth → Login** (or Register). A post-response script saves `data.accessToken` into `{{accessToken}}`.
+3. Send any protected request — collection Bearer auth uses `{{accessToken}}`.
+
+To sync the same Login/Register/Refresh scripts and Products Bearer auth onto the remote InvoiceGen workspace collections:
+
+```powershell
+$env:POSTMAN_API_KEY = "PMAK-..."   # https://go.postman.co/settings/me/api-keys
+node postman/apply-dynamic-auth.mjs
+```
+
+The committed collection is a starter subset. Prefer OpenAPI + `docs/API.md` for the full route surface and error scenarios.
 
 ## Keeping docs in sync
 

@@ -10,7 +10,8 @@ import { sendSuccess } from "../../utils/apiResponse.js";
 import * as subscriptionService from "./subscription.service.js";
 
 const changePlanSchema = z.object({
-  planId: z.enum(["free", "professional", "business"]),
+  // Service enforces known plans → INVALID_PLAN (not Zod VALIDATION_ERROR)
+  planId: z.string().trim().min(1).max(40),
   note: z.string().trim().max(500).optional(),
 });
 

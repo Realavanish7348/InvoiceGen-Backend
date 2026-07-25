@@ -1,6 +1,6 @@
 import { Settings, type SettingsDocument } from "./settings.model.js";
 import { TaxRule } from "../taxRules/taxRule.model.js";
-import { assertCompanyOwnership } from "../../utils/ownershipCheck.js";
+import { badRequest } from "../../utils/AppError.js";
 
 export async function getOrCreateSettings(companyId: string) {
   let settings = await Settings.findOne({ companyId });
@@ -28,7 +28,12 @@ export async function updateSettings(companyId: string, input: SettingsInput) {
     Object.prototype.hasOwnProperty.call(input, "defaultTaxRuleId") &&
     input.defaultTaxRuleId
   ) {
-    await assertCompanyOwnership(TaxRule, input.defaultTaxRuleId, companyId);
+    const rule = await TaxRule.findOne({
+      _id: input.defaultTaxRuleId,
+      companyId,
+      isDeleted: false,
+    });
+    if (!rule) throw badRequest("Invalid tax rule");
   }
 
   const settings = await getOrCreateSettings(companyId);

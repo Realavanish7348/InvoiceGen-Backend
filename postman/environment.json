@@ -1,10 +1,66 @@
 {
-  "id": "invoicegen-local",
-  "name": "InvoiceGen Local",
+  "id": "invoicegen-local-dev",
+  "name": "Local Dev",
   "values": [
-    { "key": "baseUrl", "value": "http://localhost:5000", "enabled": true },
-    { "key": "accessToken", "value": "", "enabled": true },
-    { "key": "clientId", "value": "", "enabled": true },
-    { "key": "invoiceId", "value": "", "enabled": true }
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "clientId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "productId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "serviceId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "taxRuleId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "templateId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "invoiceId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "sessionId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "notificationId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    }
   ]
 }

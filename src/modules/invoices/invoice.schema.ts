@@ -32,8 +32,21 @@ export const createInvoiceSchema = z.object({
   footer: z.string().max(2000).optional(),
 });
 
-export const updateInvoiceSchema = createInvoiceSchema.partial().extend({
+/** Partial update — no `.default()` so notes-only patches do not inject financial keys. */
+export const updateInvoiceSchema = z.object({
+  clientId: z.string().regex(/^[a-f\d]{24}$/i).optional(),
+  templateId: z.string().regex(/^[a-f\d]{24}$/i).optional(),
+  currency: z.string().length(3).optional(),
+  issueDate: z.coerce.date().optional(),
+  dueDate: z.coerce.date().optional(),
   items: z.array(invoiceLineSchema).min(1).optional(),
+  discountAmount: z.number().int().min(0).optional(),
+  taxRuleId: z.string().regex(/^[a-f\d]{24}$/i).optional(),
+  shippingAmount: z.number().int().min(0).optional(),
+  notes: z.string().max(5000).optional(),
+  terms: z.string().max(5000).optional(),
+  paymentInstructions: z.string().max(5000).optional(),
+  footer: z.string().max(2000).optional(),
 });
 
 export const invoiceStatusSchema = z.object({

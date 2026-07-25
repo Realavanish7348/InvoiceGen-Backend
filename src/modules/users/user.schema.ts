@@ -13,5 +13,6 @@ export const changePasswordSchema = z.object({
 });
 
 export const deleteAccountSchema = z.object({
-  confirmation: z.literal("DELETE MY ACCOUNT"),
+  // Service enforces exact text → CONFIRM_TEXT_MISMATCH (not Zod VALIDATION_ERROR)
+  confirmation: z.string().min(1).max(64),
 });
