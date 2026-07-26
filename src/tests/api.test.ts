@@ -637,6 +637,137 @@ describe("expenses + reports", () => {
   });
 });
 
+describe("AI features", () => {
+  it("gates AI draft on plan and requires provider when not mocked", async () => {
+    const { token } = await register("ai-free@example.com");
+
+    const denied = await request(app)
+      .post("/api/v1/ai/invoices/draft")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ prompt: "Invoice Acme for consulting 10 hours at $100" });
+    expect(denied.status).toBe(400);
+    expect(denied.body.error.code).toBe("PLAN_FEATURE_REQUIRED");
+
+    await request(app)
+      .post("/api/v1/subscriptions/change-plan")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ planId: "professional" });
+
+    const unconfigured = await request(app)
+      .post("/api/v1/ai/invoices/draft")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ prompt: "Invoice Acme for consulting 10 hours at $100" });
+    expect(unconfigured.status).toBe(400);
+    expect(unconfigured.body.error.code).toBe("AI_NOT_CONFIGURED");
+  });
+
+  it("returns mocked AI draft, OCR scan, voice, and insights", async () => {
+    const { token, user } = await register("ai-mock@example.com");
+    await request(app)
+      .post("/api/v1/subscriptions/change-plan")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ planId: "business" });
+
+    const client = await request(app)
+      .post("/api/v1/clients")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "Acme Corp", email: "billing@acme.test" });
+    expect(client.status).toBe(201);
+
+    const {
+      setChatCompletionImpl,
+      setTranscribeImpl,
+    } = await import("../modules/ai/openai.client.js");
+    const { resetAiDailyCaps } = await import(
+      "../modules/ai/ai.entitlements.js"
+    );
+
+    resetAiDailyCaps();
+    setChatCompletionImpl(async (params) => {
+      const userMsg = params.messages.find((m) => m.role === "user");
+      const text =
+        typeof userMsg?.content === "string"
+          ? userMsg.content
+          : JSON.stringify(userMsg?.content ?? "");
+
+      if (text.includes("Metrics:")) {
+        return JSON.stringify({
+          summary: "Solid month with positive net.",
+          bullets: ["Revenue exceeded expenses", "Outstanding balance remains"],
+        });
+      }
+      if (text.includes("receipt") || text.includes("PDF text")) {
+        return JSON.stringify({
+          amount: 2599,
+          currency: "USD",
+          category: "Software",
+          date: "2026-07-10",
+          vendor: "Notion",
+          confidence: 0.9,
+        });
+      }
+      return JSON.stringify({
+        clientHint: "Acme Corp",
+        currency: "USD",
+        issueDate: "2026-07-01",
+        dueDate: "2026-07-15",
+        items: [{ name: "Consulting", quantity: 2, unitPrice: 15000 }],
+        discountAmount: 0,
+        shippingAmount: 0,
+        notes: "Thanks",
+      });
+    });
+    setTranscribeImpl(async () => "Invoice Acme Corp for two hours consulting at 150 dollars");
+
+    const draft = await request(app)
+      .post("/api/v1/ai/invoices/draft")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ prompt: "Bill Acme Corp for 2 hours consulting at $150/hr" });
+    expect(draft.status).toBe(200);
+    expect(draft.body.data.draft.items[0].unitPrice).toBe(15000);
+    expect(draft.body.data.clientMatch).toBe("matched");
+    expect(draft.body.data.draft.clientId).toBe(client.body.data._id);
+
+    const voice = await request(app)
+      .post("/api/v1/ai/invoices/voice")
+      .set("Authorization", `Bearer ${token}`)
+      .attach("audio", Buffer.from("fake-audio"), {
+        filename: "note.webm",
+        contentType: "audio/webm",
+      });
+    expect(voice.status).toBe(200);
+    expect(voice.body.data.transcript).toContain("Acme");
+    expect(voice.body.data.draft.items.length).toBeGreaterThan(0);
+
+    const scan = await request(app)
+      .post("/api/v1/ai/expenses/scan")
+      .set("Authorization", `Bearer ${token}`)
+      .attach("receipt", Buffer.from("fake-png"), {
+        filename: "receipt.png",
+        contentType: "image/png",
+      });
+    expect(scan.status).toBe(200);
+    expect(scan.body.data.suggestion.amount).toBe(2599);
+    expect(scan.body.data.suggestion.category).toBe("Software");
+
+    const from = new Date(Date.now() - 7 * 86400000).toISOString();
+    const to = new Date().toISOString();
+    const insights = await request(app)
+      .post("/api/v1/ai/insights")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ from, to, question: "How did we do?" });
+    expect(insights.status).toBe(200);
+    expect(insights.body.data.summary).toBeTruthy();
+    expect(insights.body.data.metricsRef).toHaveProperty("revenue");
+    expect(insights.body.data.bullets.length).toBeGreaterThan(0);
+
+    setChatCompletionImpl(null);
+    setTranscribeImpl(null);
+    resetAiDailyCaps();
+    void user;
+  });
+});
+
 describe("health", () => {
   it("returns API info at root", async () => {
     const res = await request(app).get("/");

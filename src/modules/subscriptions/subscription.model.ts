@@ -11,6 +11,9 @@ export const PLAN_DEFINITIONS = {
     onlinePayments: false,
     expenses: false,
     reports: false,
+    aiInvoices: false,
+    ocrReceipts: false,
+    aiInsights: false,
   },
   professional: {
     id: "professional",
@@ -22,6 +25,9 @@ export const PLAN_DEFINITIONS = {
     onlinePayments: true,
     expenses: true,
     reports: false,
+    aiInvoices: true,
+    ocrReceipts: true,
+    aiInsights: false,
   },
   business: {
     id: "business",
@@ -33,6 +39,9 @@ export const PLAN_DEFINITIONS = {
     onlinePayments: true,
     expenses: true,
     reports: true,
+    aiInvoices: true,
+    ocrReceipts: true,
+    aiInsights: true,
   },
 } as const;
 

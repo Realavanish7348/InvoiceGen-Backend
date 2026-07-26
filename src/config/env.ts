@@ -24,6 +24,18 @@ const envSchema = z.object({
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   UPLOAD_DIR: z.string().default("uploads"),
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(2_097_152),
+  /** Optional — empty disables all /ai routes (same pattern as Stripe). */
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
+  OPENAI_MODEL: z.string().default("gpt-4o-mini"),
+  OPENAI_VISION_MODEL: z.string().default("gpt-4o-mini"),
+  OPENAI_STT_MODEL: z.string().default("whisper-1"),
+  OPENAI_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
+  OPENAI_MAX_TOKENS: z.coerce.number().int().positive().default(2_048),
+  /** Audio uploads for voice invoices (default 10MB). */
+  MAX_AUDIO_UPLOAD_BYTES: z.coerce.number().int().positive().default(10_485_760),
+  /** Soft daily cap per company for AI calls (in-memory; resets on restart). */
+  AI_DAILY_REQUEST_CAP: z.coerce.number().int().positive().default(100),
 });
 
 const parsed = envSchema.safeParse(process.env);
