@@ -638,8 +638,13 @@ describe("expenses + reports", () => {
 });
 
 describe("AI features", () => {
-  it("gates AI draft on plan and requires provider when not mocked", async () => {
-    const { token } = await register("ai-free@example.com");
+  it("gates AI draft on plan and does not burn daily cap when unconfigured", async () => {
+    const { token, user } = await register("ai-free@example.com");
+    const {
+      resetAiDailyCaps,
+      getAiDailyCountForTests,
+    } = await import("../modules/ai/ai.entitlements.js");
+    resetAiDailyCaps();
 
     const denied = await request(app)
       .post("/api/v1/ai/invoices/draft")
@@ -659,9 +664,123 @@ describe("AI features", () => {
       .send({ prompt: "Invoice Acme for consulting 10 hours at $100" });
     expect(unconfigured.status).toBe(400);
     expect(unconfigured.body.error.code).toBe("AI_NOT_CONFIGURED");
+    expect(getAiDailyCountForTests(user.activeCompanyId)).toBe(0);
   });
 
-  it("returns mocked AI draft, OCR scan, voice, and insights", async () => {
+  it("denies insights on professional plan", async () => {
+    const { token } = await register("ai-pro-insights@example.com");
+    await request(app)
+      .post("/api/v1/subscriptions/change-plan")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ planId: "professional" });
+
+    const from = new Date(Date.now() - 7 * 86400000).toISOString();
+    const to = new Date().toISOString();
+    const denied = await request(app)
+      .post("/api/v1/ai/insights")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ from, to });
+    expect(denied.status).toBe(400);
+    expect(denied.body.error.code).toBe("PLAN_FEATURE_REQUIRED");
+  });
+
+  it("returns FILE_REQUIRED when voice or scan omit the file", async () => {
+    const { token } = await register("ai-nofile@example.com");
+    await request(app)
+      .post("/api/v1/subscriptions/change-plan")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ planId: "professional" });
+
+    const voice = await request(app)
+      .post("/api/v1/ai/invoices/voice")
+      .set("Authorization", `Bearer ${token}`);
+    expect(voice.status).toBe(400);
+    expect(voice.body.error.code).toBe("FILE_REQUIRED");
+
+    const scan = await request(app)
+      .post("/api/v1/ai/expenses/scan")
+      .set("Authorization", `Bearer ${token}`);
+    expect(scan.status).toBe(400);
+    expect(scan.body.error.code).toBe("FILE_REQUIRED");
+  });
+
+  it("returns AI_INVALID_RESPONSE when the model returns garbage JSON", async () => {
+    const { token } = await register("ai-badjson@example.com");
+    await request(app)
+      .post("/api/v1/subscriptions/change-plan")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ planId: "professional" });
+
+    const { setChatCompletionImpl } = await import(
+      "../modules/ai/openai.client.js"
+    );
+    const { resetAiDailyCaps } = await import(
+      "../modules/ai/ai.entitlements.js"
+    );
+    resetAiDailyCaps();
+    setChatCompletionImpl(async () => "not-json-at-all");
+
+    try {
+      const res = await request(app)
+        .post("/api/v1/ai/invoices/draft")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ prompt: "Bill someone for work" });
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe("AI_INVALID_RESPONSE");
+    } finally {
+      setChatCompletionImpl(null);
+      resetAiDailyCaps();
+    }
+  });
+
+  it("enforces AI_DAILY_LIMIT_EXCEEDED when cap is exhausted", async () => {
+    const { token } = await register("ai-cap@example.com");
+    await request(app)
+      .post("/api/v1/subscriptions/change-plan")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ planId: "professional" });
+
+    const { setChatCompletionImpl } = await import(
+      "../modules/ai/openai.client.js"
+    );
+    const {
+      resetAiDailyCaps,
+      setAiDailyCapForTests,
+    } = await import("../modules/ai/ai.entitlements.js");
+
+    resetAiDailyCaps();
+    setAiDailyCapForTests(1);
+    setChatCompletionImpl(async () =>
+      JSON.stringify({
+        currency: "USD",
+        issueDate: "2026-07-01",
+        dueDate: "2026-07-15",
+        items: [{ name: "Work", quantity: 1, unitPrice: 1000 }],
+        discountAmount: 0,
+        shippingAmount: 0,
+      }),
+    );
+
+    try {
+      const first = await request(app)
+        .post("/api/v1/ai/invoices/draft")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ prompt: "One hour of work at $10" });
+      expect(first.status).toBe(200);
+
+      const second = await request(app)
+        .post("/api/v1/ai/invoices/draft")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ prompt: "Another hour of work at $10" });
+      expect(second.status).toBe(400);
+      expect(second.body.error.code).toBe("AI_DAILY_LIMIT_EXCEEDED");
+    } finally {
+      setChatCompletionImpl(null);
+      resetAiDailyCaps();
+    }
+  });
+
+  it("returns mocked AI draft, OCR scan, voice, and insights without persisting", async () => {
     const { token, user } = await register("ai-mock@example.com");
     await request(app)
       .post("/api/v1/subscriptions/change-plan")
@@ -673,6 +792,15 @@ describe("AI features", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ name: "Acme Corp", email: "billing@acme.test" });
     expect(client.status).toBe(201);
+
+    const { Invoice } = await import("../modules/invoices/invoice.model.js");
+    const { Expense } = await import("../modules/expenses/expense.model.js");
+    const invoicesBefore = await Invoice.countDocuments({
+      companyId: user.activeCompanyId,
+    });
+    const expensesBefore = await Expense.countDocuments({
+      companyId: user.activeCompanyId,
+    });
 
     const {
       setChatCompletionImpl,
@@ -719,52 +847,71 @@ describe("AI features", () => {
     });
     setTranscribeImpl(async () => "Invoice Acme Corp for two hours consulting at 150 dollars");
 
-    const draft = await request(app)
-      .post("/api/v1/ai/invoices/draft")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ prompt: "Bill Acme Corp for 2 hours consulting at $150/hr" });
-    expect(draft.status).toBe(200);
-    expect(draft.body.data.draft.items[0].unitPrice).toBe(15000);
-    expect(draft.body.data.clientMatch).toBe("matched");
-    expect(draft.body.data.draft.clientId).toBe(client.body.data._id);
+    try {
+      const draft = await request(app)
+        .post("/api/v1/ai/invoices/draft")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ prompt: "Bill Acme Corp for 2 hours consulting at $150/hr" });
+      expect(draft.status).toBe(200);
+      expect(draft.body.data.draft.items[0].unitPrice).toBe(15000);
+      expect(draft.body.data.clientMatch).toBe("matched");
+      expect(draft.body.data.draft.clientId).toBe(client.body.data._id);
 
-    const voice = await request(app)
-      .post("/api/v1/ai/invoices/voice")
-      .set("Authorization", `Bearer ${token}`)
-      .attach("audio", Buffer.from("fake-audio"), {
-        filename: "note.webm",
-        contentType: "audio/webm",
-      });
-    expect(voice.status).toBe(200);
-    expect(voice.body.data.transcript).toContain("Acme");
-    expect(voice.body.data.draft.items.length).toBeGreaterThan(0);
+      const voice = await request(app)
+        .post("/api/v1/ai/invoices/voice")
+        .set("Authorization", `Bearer ${token}`)
+        .attach("audio", Buffer.from("fake-audio"), {
+          filename: "note.webm",
+          contentType: "audio/webm",
+        });
+      expect(voice.status).toBe(200);
+      expect(voice.body.data.transcript).toContain("Acme");
+      expect(voice.body.data.draft.items.length).toBeGreaterThan(0);
 
-    const scan = await request(app)
-      .post("/api/v1/ai/expenses/scan")
-      .set("Authorization", `Bearer ${token}`)
-      .attach("receipt", Buffer.from("fake-png"), {
-        filename: "receipt.png",
-        contentType: "image/png",
-      });
-    expect(scan.status).toBe(200);
-    expect(scan.body.data.suggestion.amount).toBe(2599);
-    expect(scan.body.data.suggestion.category).toBe("Software");
+      const badClientId = await request(app)
+        .post("/api/v1/ai/invoices/voice")
+        .set("Authorization", `Bearer ${token}`)
+        .field("clientId", "not-an-objectid")
+        .attach("audio", Buffer.from("fake-audio"), {
+          filename: "note.webm",
+          contentType: "audio/webm",
+        });
+      expect(badClientId.status).toBe(400);
+      expect(badClientId.body.error.code).toBe("VALIDATION_ERROR");
 
-    const from = new Date(Date.now() - 7 * 86400000).toISOString();
-    const to = new Date().toISOString();
-    const insights = await request(app)
-      .post("/api/v1/ai/insights")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ from, to, question: "How did we do?" });
-    expect(insights.status).toBe(200);
-    expect(insights.body.data.summary).toBeTruthy();
-    expect(insights.body.data.metricsRef).toHaveProperty("revenue");
-    expect(insights.body.data.bullets.length).toBeGreaterThan(0);
+      const scan = await request(app)
+        .post("/api/v1/ai/expenses/scan")
+        .set("Authorization", `Bearer ${token}`)
+        .attach("receipt", Buffer.from("fake-png"), {
+          filename: "receipt.png",
+          contentType: "image/png",
+        });
+      expect(scan.status).toBe(200);
+      expect(scan.body.data.suggestion.amount).toBe(2599);
+      expect(scan.body.data.suggestion.category).toBe("Software");
 
-    setChatCompletionImpl(null);
-    setTranscribeImpl(null);
-    resetAiDailyCaps();
-    void user;
+      const from = new Date(Date.now() - 7 * 86400000).toISOString();
+      const to = new Date().toISOString();
+      const insights = await request(app)
+        .post("/api/v1/ai/insights")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ from, to, question: "How did we do?" });
+      expect(insights.status).toBe(200);
+      expect(insights.body.data.summary).toBeTruthy();
+      expect(insights.body.data.metricsRef).toHaveProperty("revenue");
+      expect(insights.body.data.bullets.length).toBeGreaterThan(0);
+
+      expect(
+        await Invoice.countDocuments({ companyId: user.activeCompanyId }),
+      ).toBe(invoicesBefore);
+      expect(
+        await Expense.countDocuments({ companyId: user.activeCompanyId }),
+      ).toBe(expensesBefore);
+    } finally {
+      setChatCompletionImpl(null);
+      setTranscribeImpl(null);
+      resetAiDailyCaps();
+    }
   });
 });
 

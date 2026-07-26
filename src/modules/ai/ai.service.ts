@@ -19,6 +19,7 @@ import {
   chatCompletion,
   parseJsonObject,
   transcribeAudio,
+  assertAiReady,
 } from "./openai.client.js";
 
 export type ClientMatchStatus = "matched" | "ambiguous" | "none" | "provided";
@@ -208,6 +209,7 @@ export async function generateInvoiceDraft(params: {
   clientId?: string;
 }) {
   await assertAiInvoicesEntitlement(params.companyId);
+  assertAiReady();
   assertAiDailyCap(params.companyId);
   return buildInvoiceDraftFromPrompt(params);
 }
@@ -220,6 +222,7 @@ export async function generateInvoiceDraftFromVoice(params: {
   clientId?: string;
 }) {
   await assertAiInvoicesEntitlement(params.companyId);
+  assertAiReady();
   assertAiDailyCap(params.companyId);
 
   const transcript = await transcribeAudio(
@@ -266,6 +269,7 @@ export async function scanExpenseReceipt(params: {
   originalName: string;
 }) {
   await assertOcrReceiptsEntitlement(params.companyId);
+  assertAiReady();
   assertAiDailyCap(params.companyId);
 
   const system = `You extract expense fields from a receipt.
@@ -353,6 +357,7 @@ export async function generateFinancialInsights(params: {
   question?: string;
 }) {
   await assertAiInsightsEntitlement(params.companyId);
+  assertAiReady();
   assertAiDailyCap(params.companyId);
 
   const metrics = await getReportSummary(

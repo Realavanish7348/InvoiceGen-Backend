@@ -87,6 +87,17 @@ export async function transcribeAudio(
   return transcribeImpl(buffer, filename, mimeType);
 }
 
+/**
+ * Ready for an AI call: real key present, or a test mock override is installed.
+ * Used before daily-cap so unconfigured requests do not burn quota.
+ */
+export function assertAiReady(): void {
+  if (isAiConfigured() || chatCompletionOverridden || transcribeOverridden) {
+    return;
+  }
+  assertAiConfigured();
+}
+
 async function defaultChatCompletion(
   params: ChatCompletionParams,
 ): Promise<string> {

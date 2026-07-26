@@ -13,6 +13,19 @@ import { env } from "../../config/env.js";
 import { aiInvoiceDraftSchema, aiInsightsSchema } from "./ai.schema.js";
 import * as aiService from "./ai.service.js";
 
+const OBJECT_ID_RE = /^[a-f\d]{24}$/i;
+
+function optionalObjectId(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const trimmed = value.trim();
+  if (!OBJECT_ID_RE.test(trimmed)) {
+    throw badRequest("Invalid clientId", "VALIDATION_ERROR", {
+      clientId: ["Must be a valid ObjectId"],
+    });
+  }
+  return trimmed;
+}
+
 const aiLimiter = rateLimit({
   windowMs: 60_000,
   max: 20,
@@ -115,10 +128,7 @@ async function voiceInvoice(req: Request, res: Response, next: NextFunction) {
         "UPLOAD_ERROR",
       );
     }
-    const clientId =
-      typeof req.body.clientId === "string" && req.body.clientId.trim()
-        ? req.body.clientId.trim()
-        : undefined;
+    const clientId = optionalObjectId(req.body.clientId);
 
     const result = await aiService.generateInvoiceDraftFromVoice({
       companyId: req.companyId!,
