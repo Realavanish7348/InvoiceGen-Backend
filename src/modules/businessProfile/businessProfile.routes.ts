@@ -7,6 +7,7 @@ import {
   resolveCompanyContext,
   rejectClientCompanyId,
 } from "../../middleware/resolveCompanyContext.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import { validate } from "../../middleware/validate.js";
 import { sendSuccess } from "../../utils/apiResponse.js";
 import { badRequest } from "../../utils/AppError.js";
@@ -108,7 +109,13 @@ businessProfileRouter.use(
 businessProfileRouter.get("/", getProfile);
 businessProfileRouter.patch(
   "/",
+  requireRole("owner", "admin"),
   validate({ body: updateBusinessProfileSchema }),
   updateProfile,
 );
-businessProfileRouter.post("/logo", uploadLogoMiddleware, uploadLogo);
+businessProfileRouter.post(
+  "/logo",
+  requireRole("owner", "admin"),
+  uploadLogoMiddleware,
+  uploadLogo,
+);

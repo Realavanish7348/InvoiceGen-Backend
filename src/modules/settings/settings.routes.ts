@@ -4,6 +4,7 @@ import {
   resolveCompanyContext,
   rejectClientCompanyId,
 } from "../../middleware/resolveCompanyContext.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import { validate } from "../../middleware/validate.js";
 import { sendSuccess } from "../../utils/apiResponse.js";
 import { updateSettingsSchema } from "./settings.schema.js";
@@ -38,6 +39,7 @@ settingsRouter.use(requireAuth, resolveCompanyContext, rejectClientCompanyId);
 settingsRouter.get("/", getSettings);
 settingsRouter.patch(
   "/",
+  requireRole("owner", "admin"),
   validate({ body: updateSettingsSchema }),
   updateSettings,
 );

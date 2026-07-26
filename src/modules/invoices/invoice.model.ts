@@ -79,6 +79,24 @@ const invoiceSchema = new Schema(
     },
     publishedAt: { type: Date },
     paidAt: { type: Date },
+    paymentProvider: {
+      type: String,
+      enum: ["stripe"],
+    },
+    stripeCheckoutSessionId: { type: String },
+    stripePaymentIntentId: { type: String },
+    /** Last successful email delivery timestamp (convenience mirror of lastEmailDelivery.sentAt). */
+    sentAt: { type: Date },
+    lastEmailDelivery: {
+      to: { type: String },
+      status: {
+        type: String,
+        enum: ["sent", "failed"],
+      },
+      sentAt: { type: Date },
+      error: { type: String },
+      messageId: { type: String },
+    },
     createdByUserId: { type: Schema.Types.ObjectId, ref: "User" },
     isDeleted: { type: Boolean, default: false, index: true },
     deletedAt: { type: Date, default: null },

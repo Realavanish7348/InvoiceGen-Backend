@@ -7,7 +7,7 @@ import { Invoice } from "../invoices/invoice.model.js";
 import { Session } from "../auth/session.model.js";
 import { Settings } from "../settings/settings.model.js";
 import { Subscription } from "../subscriptions/subscription.model.js";
-import { notFound, unauthorized, badRequest } from "../../utils/AppError.js";
+import { notFound, unauthorized, badRequest, forbidden } from "../../utils/AppError.js";
 import * as authService from "../auth/auth.service.js";
 
 export async function getMe(userId: string) {
@@ -25,6 +25,28 @@ export async function getMe(userId: string) {
       ? String(user.activeCompanyId)
       : null,
   };
+}
+
+export async function switchActiveCompany(userId: string, companyId: string) {
+  const membership = await Membership.findOne({
+    userId,
+    companyId,
+    status: "active",
+  });
+  if (!membership) {
+    throw forbidden("You are not a member of that workspace");
+  }
+  const company = await Company.findOne({ _id: companyId, isDeleted: false });
+  if (!company) throw notFound("Workspace not found");
+
+  const user = await User.findOneAndUpdate(
+    { _id: userId, isDeleted: false },
+    { $set: { activeCompanyId: companyId } },
+    { new: true },
+  );
+  if (!user) throw notFound("User not found");
+
+  return getMe(userId);
 }
 
 export async function updateMe(

@@ -5,6 +5,7 @@ import {
   resolveCompanyContext,
   rejectClientCompanyId,
 } from "../../middleware/resolveCompanyContext.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import { validate } from "../../middleware/validate.js";
 import { sendSuccess } from "../../utils/apiResponse.js";
 import * as subscriptionService from "./subscription.service.js";
@@ -70,11 +71,13 @@ subscriptionsRouter.get("/", getCurrent);
 subscriptionsRouter.get("/usage", getUsage);
 subscriptionsRouter.post(
   "/change-plan",
+  requireRole("owner"),
   validate({ body: changePlanSchema }),
   changePlan,
 );
 subscriptionsRouter.patch(
   "/",
+  requireRole("owner"),
   validate({ body: changePlanSchema }),
   changePlan,
 );

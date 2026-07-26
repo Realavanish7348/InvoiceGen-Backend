@@ -20,6 +20,8 @@ const envSchema = z.object({
   SMTP_PASS: z.string().optional(),
   EMAIL_FROM: z.string().default("noreply@invoicegen.local"),
   SENTRY_DSN: z.string().optional(),
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
   UPLOAD_DIR: z.string().default("uploads"),
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(2_097_152),
 });

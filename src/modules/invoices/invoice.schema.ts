@@ -53,6 +53,12 @@ export const invoiceStatusSchema = z.object({
   status: z.enum(["pending", "paid", "archived"]),
 });
 
+export const sendInvoiceSchema = z.object({
+  to: z.string().email().max(320).optional(),
+  message: z.string().max(2000).optional(),
+  includePaymentLink: z.boolean().optional().default(true),
+});
+
 export const listInvoicesQuerySchema = paginationQuerySchema.extend({
   status: z
     .enum(["draft", "published", "pending", "paid", "overdue", "archived"])

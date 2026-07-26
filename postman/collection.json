@@ -178,6 +178,32 @@
           }
         },
         {
+          "name": "Email invoice",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"to\": \"client@example.com\",\n  \"message\": \"Please find your invoice attached.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/invoices/{{invoiceId}}/send"
+          }
+        },
+        {
+          "name": "Create checkout session",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/v1/payments/invoices/{{invoiceId}}/checkout-session"
+          }
+        },
+        {
+          "name": "Payments config",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/v1/payments/config"
+          }
+        },
+        {
           "name": "Download PDF",
           "request": {
             "method": "GET",

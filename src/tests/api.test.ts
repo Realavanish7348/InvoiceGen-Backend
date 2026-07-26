@@ -164,6 +164,88 @@ describe("invoices", () => {
     expect(pdf.body.length).toBeGreaterThan(100);
   });
 
+  it("emails a published invoice PDF and records sentAt", async () => {
+    const { token } = await register("send@example.com");
+
+    const client = await request(app)
+      .post("/api/v1/clients")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "Acme", email: "billing@acme.test" });
+    expect(client.status).toBe(201);
+
+    const invoice = await request(app)
+      .post("/api/v1/invoices")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        clientId: client.body.data._id,
+        currency: "USD",
+        issueDate: new Date().toISOString(),
+        dueDate: new Date(Date.now() + 86400000).toISOString(),
+        items: [{ name: "Design", quantity: 1, unitPrice: 10000 }],
+      });
+    expect(invoice.status).toBe(201);
+
+    const draftSend = await request(app)
+      .post(`/api/v1/invoices/${invoice.body.data._id}/send`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+    expect(draftSend.status).toBe(400);
+    expect(draftSend.body.error.code).toBe("INVOICE_NOT_SENDABLE");
+
+    await request(app)
+      .post(`/api/v1/invoices/${invoice.body.data._id}/publish`)
+      .set("Authorization", `Bearer ${token}`);
+
+    const sent = await request(app)
+      .post(`/api/v1/invoices/${invoice.body.data._id}/send`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ message: "Please pay at your earliest convenience." });
+    expect(sent.status).toBe(200);
+    expect(sent.body.data.sentAt).toBeTruthy();
+    expect(sent.body.data.lastEmailDelivery.to).toBe("billing@acme.test");
+    expect(sent.body.data.lastEmailDelivery.status).toBe("sent");
+
+    const override = await request(app)
+      .post(`/api/v1/invoices/${invoice.body.data._id}/send`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ to: "alt@acme.test" });
+    expect(override.status).toBe(200);
+    expect(override.body.data.lastEmailDelivery.to).toBe("alt@acme.test");
+  });
+
+  it("rejects send when client has no email and to is omitted", async () => {
+    const { token } = await register("noemail@example.com");
+
+    const client = await request(app)
+      .post("/api/v1/clients")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "No Email Co" });
+    expect(client.status).toBe(201);
+
+    const invoice = await request(app)
+      .post("/api/v1/invoices")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        clientId: client.body.data._id,
+        currency: "USD",
+        issueDate: new Date().toISOString(),
+        dueDate: new Date(Date.now() + 86400000).toISOString(),
+        items: [{ name: "Work", quantity: 1, unitPrice: 5000 }],
+      });
+    expect(invoice.status).toBe(201);
+
+    await request(app)
+      .post(`/api/v1/invoices/${invoice.body.data._id}/publish`)
+      .set("Authorization", `Bearer ${token}`);
+
+    const res = await request(app)
+      .post(`/api/v1/invoices/${invoice.body.data._id}/send`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("MISSING_RECIPIENT_EMAIL");
+  });
+
   it("escapes invoice search metacharacters", async () => {
     const { token } = await register("search@example.com");
     const res = await request(app)
@@ -208,6 +290,138 @@ describe("error contracts", () => {
       .send({ planId: "enterprise" });
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe("INVALID_PLAN");
+  });
+
+  it("rejects checkout when Stripe is not configured", async () => {
+    const { token } = await register("pay@example.com");
+
+    await request(app)
+      .post("/api/v1/subscriptions/change-plan")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ planId: "professional" });
+
+    const client = await request(app)
+      .post("/api/v1/clients")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "Payer", email: "payer@test.com" });
+
+    const invoice = await request(app)
+      .post("/api/v1/invoices")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        clientId: client.body.data._id,
+        currency: "USD",
+        issueDate: new Date().toISOString(),
+        dueDate: new Date(Date.now() + 86400000).toISOString(),
+        items: [{ name: "Work", quantity: 1, unitPrice: 5000 }],
+      });
+
+    await request(app)
+      .post(`/api/v1/invoices/${invoice.body.data._id}/publish`)
+      .set("Authorization", `Bearer ${token}`);
+
+    const checkout = await request(app)
+      .post(
+        `/api/v1/payments/invoices/${invoice.body.data._id}/checkout-session`,
+      )
+      .set("Authorization", `Bearer ${token}`);
+    expect(checkout.status).toBe(400);
+    expect(checkout.body.error.code).toBe("PAYMENTS_NOT_CONFIGURED");
+
+    const config = await request(app)
+      .get("/api/v1/payments/config")
+      .set("Authorization", `Bearer ${token}`);
+    expect(config.status).toBe(200);
+    expect(config.body.data.configured).toBe(false);
+  });
+
+  it("lists team members for the active workspace", async () => {
+    const { token, user } = await register("teamowner@example.com", "Team Owner");
+
+    const members = await request(app)
+      .get("/api/v1/companies/current/members")
+      .set("Authorization", `Bearer ${token}`);
+    expect(members.status).toBe(200);
+    expect(members.body.data).toHaveLength(1);
+    expect(members.body.data[0].role).toBe("owner");
+    expect(members.body.data[0].email).toBe("teamowner@example.com");
+    expect(members.body.data[0].userId).toBe(user.id);
+
+    const invite = await request(app)
+      .post("/api/v1/companies/current/invitations")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ email: "newhire@example.com", role: "member" });
+    expect(invite.status).toBe(201);
+    expect(invite.body.data.email).toBe("newhire@example.com");
+
+    const listInvites = await request(app)
+      .get("/api/v1/companies/current/invitations")
+      .set("Authorization", `Bearer ${token}`);
+    expect(listInvites.status).toBe(200);
+    expect(listInvites.body.data).toHaveLength(1);
+  });
+
+  it("creates an additional workspace and switches active company", async () => {
+    const { token, user } = await register("multiws@example.com", "Multi");
+
+    const created = await request(app)
+      .post("/api/v1/companies")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "Second Co" });
+    expect(created.status).toBe(201);
+    expect(created.body.data.name).toBe("Second Co");
+    expect(created.body.data.isActive).toBe(true);
+
+    const list = await request(app)
+      .get("/api/v1/companies")
+      .set("Authorization", `Bearer ${token}`);
+    expect(list.status).toBe(200);
+    expect(list.body.data.length).toBeGreaterThanOrEqual(2);
+
+    const other = list.body.data.find(
+      (w: { isActive: boolean }) => !w.isActive,
+    );
+    expect(other).toBeTruthy();
+
+    const switched = await request(app)
+      .patch("/api/v1/users/me/active-company")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ companyId: other.companyId });
+    expect(switched.status).toBe(200);
+    expect(switched.body.data.activeCompanyId).toBe(other.companyId);
+    expect(switched.body.data.id).toBe(user.id);
+  });
+
+  it("rejects online payment checkout on free plan", async () => {
+    const { token } = await register("freeplan@example.com");
+
+    const client = await request(app)
+      .post("/api/v1/clients")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "Payer" });
+
+    const invoice = await request(app)
+      .post("/api/v1/invoices")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        clientId: client.body.data._id,
+        currency: "USD",
+        issueDate: new Date().toISOString(),
+        dueDate: new Date(Date.now() + 86400000).toISOString(),
+        items: [{ name: "Work", quantity: 1, unitPrice: 5000 }],
+      });
+
+    await request(app)
+      .post(`/api/v1/invoices/${invoice.body.data._id}/publish`)
+      .set("Authorization", `Bearer ${token}`);
+
+    const checkout = await request(app)
+      .post(
+        `/api/v1/payments/invoices/${invoice.body.data._id}/checkout-session`,
+      )
+      .set("Authorization", `Bearer ${token}`);
+    expect(checkout.status).toBe(400);
+    expect(checkout.body.error.code).toBe("PLAN_FEATURE_REQUIRED");
   });
 
   it("returns 400 for malformed JSON", async () => {

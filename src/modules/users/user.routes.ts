@@ -9,6 +9,7 @@ import {
   updateProfileSchema,
   changePasswordSchema,
   deleteAccountSchema,
+  switchActiveCompanySchema,
 } from "./user.schema.js";
 import { Router } from "express";
 import { requireAuth } from "../../middleware/requireAuth.js";
@@ -17,6 +18,24 @@ import { resolveCompanyContext } from "../../middleware/resolveCompanyContext.js
 export async function getMe(req: Request, res: Response, next: NextFunction) {
   try {
     return sendSuccess(res, await userService.getMe(String(req.user!._id)));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function switchActiveCompany(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    return sendSuccess(
+      res,
+      await userService.switchActiveCompany(
+        String(req.user!._id),
+        req.body.companyId,
+      ),
+    );
   } catch (err) {
     return next(err);
   }
@@ -110,6 +129,11 @@ export const usersRouter = Router();
 usersRouter.use(requireAuth);
 
 usersRouter.get("/me", getMe);
+usersRouter.patch(
+  "/me/active-company",
+  validate({ body: switchActiveCompanySchema }),
+  switchActiveCompany,
+);
 usersRouter.patch("/me", validate({ body: updateProfileSchema }), updateMe);
 usersRouter.patch(
   "/me/password",

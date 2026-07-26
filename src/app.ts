@@ -12,6 +12,7 @@ import { sanitizeMongo } from "./middleware/sanitizeMongo.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { apiRouter } from "./routes.js";
 import { sendSuccess } from "./utils/apiResponse.js";
+import * as paymentService from "./modules/payments/payment.service.js";
 
 export function createApp() {
   const app = express();
@@ -51,6 +52,25 @@ export function createApp() {
       methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     }),
   );
+
+  // Stripe webhook needs the raw body for signature verification — mount before JSON parser.
+  app.post(
+    "/api/v1/webhooks/stripe",
+    express.raw({ type: "application/json" }),
+    async (req, res, next) => {
+      try {
+        const signature = req.headers["stripe-signature"];
+        const result = await paymentService.handleStripeWebhook(
+          req.body as Buffer,
+          typeof signature === "string" ? signature : undefined,
+        );
+        return sendSuccess(res, result);
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
   app.use(express.json({ limit: "10kb" }));
   app.use(express.urlencoded({ extended: true, limit: "10kb" }));
   app.use(cookieParser());

@@ -11,6 +11,18 @@ import { buildSearchRegex } from "../../utils/pagination.js";
 import { badRequest, conflict, notFound } from "../../utils/AppError.js";
 import { createNotification } from "../../services/notification.service.js";
 import { generateInvoicePdf } from "../../services/pdf.service.js";
+import { sendInvoiceEmail } from "../../services/email.service.js";
+import { logger } from "../../utils/logger.js";
+
+const SENDABLE_STATUSES = new Set([
+  "published",
+  "pending",
+  "overdue",
+  "paid",
+]);
+
+/** Reject overlapping sends for the same invoice within this window. */
+const SEND_IDEMPOTENCY_WINDOW_MS = 10_000;
 
 async function nextInvoiceNumber(companyId: string, session?: mongoose.ClientSession) {
   const settings = await Settings.findOneAndUpdate(
@@ -385,13 +397,20 @@ export async function changeStatus(
   id: string,
   status: "pending" | "paid" | "archived",
 ) {
+  if (status === "paid") {
+    return markInvoicePaid(companyId, id, {
+      actorUserId: userId,
+      source: "manual",
+    });
+  }
+
   const invoice = await assertCompanyOwnership(Invoice, id, companyId);
 
   const transitions: Record<string, string[]> = {
-    published: ["pending", "paid", "archived"],
-    pending: ["paid", "archived"],
+    published: ["pending", "archived"],
+    pending: ["archived"],
     paid: ["archived"],
-    overdue: ["paid", "archived"],
+    overdue: ["archived"],
     archived: [],
     draft: [],
   };
@@ -402,19 +421,76 @@ export async function changeStatus(
   }
 
   invoice.status = status;
-  if (status === "paid") {
-    invoice.paidAt = new Date();
+  await invoice.save();
+  return invoice;
+}
+
+/**
+ * Marks an invoice paid from manual status change or Stripe webhook.
+ * Idempotent when already `paid`.
+ */
+export async function markInvoicePaid(
+  companyId: string,
+  id: string,
+  options: {
+    actorUserId?: string;
+    source: "manual" | "stripe";
+    stripeCheckoutSessionId?: string;
+    stripePaymentIntentId?: string;
+  },
+) {
+  const invoice = await assertCompanyOwnership(Invoice, id, companyId);
+
+  if (invoice.status === "paid") {
+    if (options.stripePaymentIntentId) {
+      invoice.stripePaymentIntentId = options.stripePaymentIntentId;
+    }
+    if (options.stripeCheckoutSessionId) {
+      invoice.stripeCheckoutSessionId = options.stripeCheckoutSessionId;
+      invoice.paymentProvider = "stripe";
+    }
+    await invoice.save();
+    return invoice;
+  }
+
+  const allowedFrom = ["published", "pending", "overdue"];
+  if (!allowedFrom.includes(invoice.status)) {
+    throw badRequest(`Cannot transition from ${invoice.status} to paid`);
+  }
+
+  invoice.status = "paid";
+  invoice.paidAt = new Date();
+  if (options.source === "stripe") {
+    invoice.paymentProvider = "stripe";
+    if (options.stripeCheckoutSessionId) {
+      invoice.stripeCheckoutSessionId = options.stripeCheckoutSessionId;
+    }
+    if (options.stripePaymentIntentId) {
+      invoice.stripePaymentIntentId = options.stripePaymentIntentId;
+    }
+  }
+
+  await invoice.save();
+
+  const notifyUserId =
+    options.actorUserId ??
+    (invoice.createdByUserId ? String(invoice.createdByUserId) : undefined);
+
+  if (notifyUserId) {
     await createNotification({
       companyId,
-      userId,
+      userId: notifyUserId,
       type: "invoice_paid",
       title: "Invoice paid",
-      message: `${invoice.invoiceNumber} marked as paid`,
+      message:
+        options.source === "stripe"
+          ? `${invoice.invoiceNumber} was paid online`
+          : `${invoice.invoiceNumber} marked as paid`,
       resourceType: "invoice",
       resourceId: String(invoice._id),
     });
   }
-  await invoice.save();
+
   return invoice;
 }
 
@@ -484,4 +560,104 @@ export async function pdfForInvoice(companyId: string, id: string) {
     watermark: !plan.removeBranding,
   });
   return { buffer, filename: `${invoice.invoiceNumber}.pdf` };
+}
+
+export async function sendInvoice(
+  companyId: string,
+  userId: string,
+  id: string,
+  input: { to?: string; message?: string; paymentUrl?: string },
+) {
+  const invoice = await assertCompanyOwnership(Invoice, id, companyId);
+
+  if (!SENDABLE_STATUSES.has(invoice.status)) {
+    throw badRequest(
+      "Only published, pending, overdue, or paid invoices can be emailed",
+      "INVOICE_NOT_SENDABLE",
+    );
+  }
+
+  const recipient =
+    input.to?.trim().toLowerCase() ||
+    invoice.clientSnapshot?.email?.trim().toLowerCase();
+
+  if (!recipient) {
+    throw badRequest(
+      "No recipient email. Provide `to` or set the client email.",
+      "MISSING_RECIPIENT_EMAIL",
+    );
+  }
+
+  const last = invoice.lastEmailDelivery;
+  if (
+    last?.status === "sent" &&
+    last.sentAt &&
+    last.to === recipient &&
+    Date.now() - new Date(last.sentAt).getTime() < SEND_IDEMPOTENCY_WINDOW_MS
+  ) {
+    return invoice;
+  }
+
+  const { buffer, filename } = await pdfForInvoice(companyId, id);
+  const companyName =
+    invoice.companySnapshot?.name?.trim() || "InvoiceGen";
+
+  try {
+    const { messageId } = await sendInvoiceEmail({
+      to: recipient,
+      invoiceNumber: invoice.invoiceNumber,
+      companyName,
+      clientName: invoice.clientSnapshot?.name ?? undefined,
+      grandTotal: invoice.grandTotal ?? 0,
+      currency: invoice.currency,
+      dueDate: new Date(invoice.dueDate),
+      message: input.message,
+      paymentUrl: input.paymentUrl,
+      pdfBuffer: buffer,
+      pdfFilename: filename,
+    });
+
+    const sentAt = new Date();
+    invoice.sentAt = sentAt;
+    invoice.lastEmailDelivery = {
+      to: recipient,
+      status: "sent",
+      sentAt,
+      error: undefined,
+      messageId,
+    };
+    await invoice.save();
+
+    await createNotification({
+      companyId,
+      userId,
+      type: "invoice_sent",
+      title: "Invoice emailed",
+      message: `${invoice.invoiceNumber} was sent to ${recipient}`,
+      resourceType: "invoice",
+      resourceId: String(invoice._id),
+    });
+
+    return invoice;
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Failed to send invoice email";
+    logger.error("Invoice email failed", {
+      invoiceId: id,
+      companyId,
+      to: recipient,
+      error: message,
+    });
+
+    invoice.lastEmailDelivery = {
+      to: recipient,
+      status: "failed",
+      sentAt: new Date(),
+      error: message.slice(0, 500),
+      messageId: undefined,
+    };
+    await invoice.save();
+
+    throw badRequest(message, "EMAIL_SEND_FAILED");
+  }
 }

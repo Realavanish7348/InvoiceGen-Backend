@@ -1,4 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
+import rateLimit from "express-rate-limit";
 import { requireAuth } from "../../middleware/requireAuth.js";
 import {
   resolveCompanyContext,
@@ -13,9 +14,24 @@ import {
   updateInvoiceSchema,
   invoiceStatusSchema,
   listInvoicesQuerySchema,
+  sendInvoiceSchema,
 } from "./invoice.schema.js";
 import * as invoiceService from "./invoice.service.js";
+import * as paymentService from "../payments/payment.service.js";
 
+const sendInvoiceLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: {
+      code: "RATE_LIMIT_EXCEEDED",
+      message: "Too many invoice email requests. Try again shortly.",
+    },
+  },
+});
 async function listInvoices(req: Request, res: Response, next: NextFunction) {
   try {
     const q = req.query as unknown as {
@@ -162,6 +178,35 @@ async function downloadPdf(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+async function sendInvoice(req: Request, res: Response, next: NextFunction) {
+  try {
+    const includePaymentLink = req.body?.includePaymentLink !== false;
+    let paymentUrl: string | undefined;
+    if (includePaymentLink) {
+      const url = await paymentService.tryCreatePaymentUrl(
+        req.companyId!,
+        String(req.user!._id),
+        paramId(req),
+      );
+      paymentUrl = url ?? undefined;
+    }
+
+    const invoice = await invoiceService.sendInvoice(
+      req.companyId!,
+      String(req.user!._id),
+      paramId(req),
+      {
+        to: req.body?.to,
+        message: req.body?.message,
+        paymentUrl,
+      },
+    );
+    return sendSuccess(res, invoice);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export const invoicesRouter = Router();
 invoicesRouter.use(requireAuth, resolveCompanyContext, rejectClientCompanyId);
 
@@ -200,6 +245,12 @@ invoicesRouter.post(
   "/:id/restore",
   validate({ params: objectIdParamSchema }),
   restoreInvoice,
+);
+invoicesRouter.post(
+  "/:id/send",
+  sendInvoiceLimiter,
+  validate({ params: objectIdParamSchema, body: sendInvoiceSchema }),
+  sendInvoice,
 );
 invoicesRouter.delete(
   "/:id",

@@ -16,3 +16,7 @@ export const deleteAccountSchema = z.object({
   // Service enforces exact text → CONFIRM_TEXT_MISMATCH (not Zod VALIDATION_ERROR)
   confirmation: z.string().min(1).max(64),
 });
+
+export const switchActiveCompanySchema = z.object({
+  companyId: z.string().regex(/^[a-f\d]{24}$/i),
+});

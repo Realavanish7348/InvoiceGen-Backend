@@ -12,6 +12,12 @@ import { invoicesRouter } from "./modules/invoices/invoice.routes.js";
 import { dashboardRouter } from "./modules/dashboard/dashboard.routes.js";
 import { notificationsRouter } from "./modules/notifications/notification.routes.js";
 import { subscriptionsRouter } from "./modules/subscriptions/subscription.routes.js";
+import { paymentsRouter } from "./modules/payments/payment.routes.js";
+import {
+  invitationsPublicRouter,
+  teamRouter,
+  companiesRouter,
+} from "./modules/team/team.routes.js";
 
 export const apiRouter = Router();
 
@@ -28,3 +34,7 @@ apiRouter.use("/invoices", invoicesRouter);
 apiRouter.use("/dashboard", dashboardRouter);
 apiRouter.use("/notifications", notificationsRouter);
 apiRouter.use("/subscriptions", subscriptionsRouter);
+apiRouter.use("/payments", paymentsRouter);
+apiRouter.use("/companies/current", teamRouter);
+apiRouter.use("/companies", companiesRouter);
+apiRouter.use("/invitations", invitationsPublicRouter);
