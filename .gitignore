@@ -1,5 +1,7 @@
 # Dependencies
 node_modules/
+pnpm-lock.yaml
+pnpm-workspace.yaml
 
 # Environment & secrets — NEVER commit (only .env.example is allowed)
 .env
