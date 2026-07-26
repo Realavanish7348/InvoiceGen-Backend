@@ -32,12 +32,22 @@ async function assertOnlinePaymentsEntitlement(companyId: string) {
   }
 }
 
-export async function createCheckoutSession(
-  companyId: string,
-  userId: string,
-  invoiceId: string,
+export type CreateCheckoutParams = {
+  companyId: string;
+  invoiceId: string;
+  successPath: string;
+  cancelPath: string;
+  createdByUserId?: string;
+};
+
+/**
+ * Shared Stripe Checkout creation for staff and portal entry points.
+ * Caller must already authorize access to the invoice.
+ */
+export async function createCheckoutSessionForInvoice(
+  params: CreateCheckoutParams,
 ) {
-  await assertOnlinePaymentsEntitlement(companyId);
+  await assertOnlinePaymentsEntitlement(params.companyId);
 
   if (!isStripeConfigured()) {
     throw badRequest(
@@ -46,7 +56,11 @@ export async function createCheckoutSession(
     );
   }
 
-  const invoice = await assertCompanyOwnership(Invoice, invoiceId, companyId);
+  const invoice = await assertCompanyOwnership(
+    Invoice,
+    params.invoiceId,
+    params.companyId,
+  );
 
   if (!PAYABLE_STATUSES.has(invoice.status)) {
     throw badRequest(
@@ -63,8 +77,8 @@ export async function createCheckoutSession(
   }
 
   const stripe = getStripe();
-  const successUrl = `${env.CLIENT_URL}/invoices/${invoiceId}?payment=success`;
-  const cancelUrl = `${env.CLIENT_URL}/invoices/${invoiceId}?payment=canceled`;
+  const successUrl = `${env.CLIENT_URL}${params.successPath}`;
+  const cancelUrl = `${env.CLIENT_URL}${params.cancelPath}`;
 
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
@@ -73,7 +87,7 @@ export async function createCheckoutSession(
     client_reference_id: String(invoice._id),
     metadata: {
       invoiceId: String(invoice._id),
-      companyId,
+      companyId: params.companyId,
     },
     line_items: [
       {
@@ -97,14 +111,14 @@ export async function createCheckoutSession(
   }
 
   const payment = await Payment.create({
-    companyId,
+    companyId: params.companyId,
     invoiceId: invoice._id,
     provider: "stripe",
     status: "pending",
     amount: invoice.grandTotal,
     currency: invoice.currency,
     stripeCheckoutSessionId: session.id,
-    createdByUserId: userId,
+    createdByUserId: params.createdByUserId,
   });
 
   invoice.paymentProvider = "stripe";
@@ -116,6 +130,20 @@ export async function createCheckoutSession(
     sessionId: session.id,
     paymentId: String(payment._id),
   };
+}
+
+export async function createCheckoutSession(
+  companyId: string,
+  userId: string,
+  invoiceId: string,
+) {
+  return createCheckoutSessionForInvoice({
+    companyId,
+    invoiceId,
+    successPath: `/invoices/${invoiceId}?payment=success`,
+    cancelPath: `/invoices/${invoiceId}?payment=canceled`,
+    createdByUserId: userId,
+  });
 }
 
 /** Checkout URL + QR data URI for copy/share UX. */

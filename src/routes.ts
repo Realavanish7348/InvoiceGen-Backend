@@ -18,6 +18,9 @@ import {
   teamRouter,
   companiesRouter,
 } from "./modules/team/team.routes.js";
+import { portalRouter } from "./modules/portal/portal.routes.js";
+import { expensesRouter } from "./modules/expenses/expense.routes.js";
+import { reportsRouter } from "./modules/reports/report.routes.js";
 
 export const apiRouter = Router();
 
@@ -38,3 +41,6 @@ apiRouter.use("/payments", paymentsRouter);
 apiRouter.use("/companies/current", teamRouter);
 apiRouter.use("/companies", companiesRouter);
 apiRouter.use("/invitations", invitationsPublicRouter);
+apiRouter.use("/portal", portalRouter);
+apiRouter.use("/expenses", expensesRouter);
+apiRouter.use("/reports", reportsRouter);

@@ -90,6 +90,19 @@ export async function sendPasswordResetEmail(
   });
 }
 
+export async function sendPortalMagicLinkEmail(
+  to: string,
+  token: string,
+): Promise<void> {
+  const url = `${env.CLIENT_URL}/portal/verify?email=${encodeURIComponent(to)}&token=${encodeURIComponent(token)}`;
+  await sendEmail({
+    to,
+    subject: "Your InvoiceGen client portal link",
+    html: `<p>Sign in to view and pay your invoices:</p><p><a href="${url}">${url}</a></p><p>This link expires in 15 minutes.</p>`,
+    text: `Sign in to the InvoiceGen client portal: ${url}\nThis link expires in 15 minutes.`,
+  });
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")

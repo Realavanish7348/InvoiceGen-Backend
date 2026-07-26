@@ -9,6 +9,8 @@ export const PLAN_DEFINITIONS = {
     premiumTemplates: false,
     analytics: false,
     onlinePayments: false,
+    expenses: false,
+    reports: false,
   },
   professional: {
     id: "professional",
@@ -18,6 +20,8 @@ export const PLAN_DEFINITIONS = {
     premiumTemplates: true,
     analytics: false,
     onlinePayments: true,
+    expenses: true,
+    reports: false,
   },
   business: {
     id: "business",
@@ -27,6 +31,8 @@ export const PLAN_DEFINITIONS = {
     premiumTemplates: true,
     analytics: true,
     onlinePayments: true,
+    expenses: true,
+    reports: true,
   },
 } as const;
 

@@ -436,6 +436,207 @@ describe("error contracts", () => {
   });
 });
 
+describe("portal magic link + invoices", () => {
+  it("issues a portal session and scopes invoices by client email", async () => {
+    const { token } = await register("seller-portal@example.com", "Seller");
+    await request(app)
+      .post("/api/v1/subscriptions/change-plan")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ planId: "professional" });
+
+    const client = await request(app)
+      .post("/api/v1/clients")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "Portal Client", email: "buyer@portal.test" });
+    expect(client.status).toBe(201);
+
+    const invoice = await request(app)
+      .post("/api/v1/invoices")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        clientId: client.body.data._id,
+        currency: "USD",
+        issueDate: new Date().toISOString(),
+        dueDate: new Date(Date.now() + 86400000).toISOString(),
+        items: [{ name: "Consulting", quantity: 1, unitPrice: 10000 }],
+      });
+    expect(invoice.status).toBe(201);
+
+    await request(app)
+      .post(`/api/v1/invoices/${invoice.body.data._id}/publish`)
+      .set("Authorization", `Bearer ${token}`);
+
+    const requestLink = await request(app)
+      .post("/api/v1/portal/auth/request-link")
+      .send({ email: "buyer@portal.test" });
+    expect(requestLink.status).toBe(200);
+
+    const { PortalAuthToken } = await import(
+      "../modules/portal/portalAuthToken.model.js"
+    );
+    const { randomToken, sha256 } = await import("../utils/tokenCompare.js");
+    const raw = randomToken(32);
+    await PortalAuthToken.create({
+      email: "buyer@portal.test",
+      tokenHash: sha256(raw),
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+    });
+
+    const verify = await request(app)
+      .post("/api/v1/portal/auth/verify")
+      .send({ email: "buyer@portal.test", token: raw });
+    expect(verify.status).toBe(200);
+    expect(verify.body.data.accessToken).toBeTruthy();
+    const portalToken = verify.body.data.accessToken as string;
+
+    const list = await request(app)
+      .get("/api/v1/portal/invoices")
+      .set("Authorization", `Bearer ${portalToken}`);
+    expect(list.status).toBe(200);
+    expect(list.body.data.length).toBe(1);
+    expect(list.body.data[0].invoiceNumber).toBeTruthy();
+
+    const detail = await request(app)
+      .get(`/api/v1/portal/invoices/${invoice.body.data._id}`)
+      .set("Authorization", `Bearer ${portalToken}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.data.payable).toBe(true);
+
+    const pdf = await request(app)
+      .get(`/api/v1/portal/invoices/${invoice.body.data._id}/pdf`)
+      .set("Authorization", `Bearer ${portalToken}`);
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers["content-type"]).toContain("application/pdf");
+
+    const stranger = await request(app)
+      .post("/api/v1/portal/auth/verify")
+      .send({ email: "nobody@portal.test", token: raw });
+    expect(stranger.status).toBe(401);
+  });
+
+  it("returns 404 for invoices belonging to another client email", async () => {
+    const a = await register("seller-a@example.com", "Seller A");
+    const b = await register("seller-b@example.com", "Seller B");
+
+    const clientA = await request(app)
+      .post("/api/v1/clients")
+      .set("Authorization", `Bearer ${a.token}`)
+      .send({ name: "A Client", email: "a-only@portal.test" });
+    const invoiceA = await request(app)
+      .post("/api/v1/invoices")
+      .set("Authorization", `Bearer ${a.token}`)
+      .send({
+        clientId: clientA.body.data._id,
+        currency: "USD",
+        issueDate: new Date().toISOString(),
+        dueDate: new Date(Date.now() + 86400000).toISOString(),
+        items: [{ name: "A", quantity: 1, unitPrice: 5000 }],
+      });
+    await request(app)
+      .post(`/api/v1/invoices/${invoiceA.body.data._id}/publish`)
+      .set("Authorization", `Bearer ${a.token}`);
+
+    await request(app)
+      .post("/api/v1/clients")
+      .set("Authorization", `Bearer ${b.token}`)
+      .send({ name: "B Client", email: "b-only@portal.test" });
+
+    const { PortalAuthToken } = await import(
+      "../modules/portal/portalAuthToken.model.js"
+    );
+    const { randomToken, sha256 } = await import("../utils/tokenCompare.js");
+    const raw = randomToken(32);
+    await PortalAuthToken.create({
+      email: "b-only@portal.test",
+      tokenHash: sha256(raw),
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+    });
+    const verify = await request(app)
+      .post("/api/v1/portal/auth/verify")
+      .send({ email: "b-only@portal.test", token: raw });
+    const portalToken = verify.body.data.accessToken as string;
+
+    const miss = await request(app)
+      .get(`/api/v1/portal/invoices/${invoiceA.body.data._id}`)
+      .set("Authorization", `Bearer ${portalToken}`);
+    expect(miss.status).toBe(404);
+  });
+});
+
+describe("expenses + reports", () => {
+  it("gates expenses on plan and supports CRUD", async () => {
+    const { token } = await register("expenses@example.com");
+
+    const denied = await request(app)
+      .post("/api/v1/expenses")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        amount: 2500,
+        currency: "USD",
+        category: "Software",
+        date: new Date().toISOString(),
+      });
+    expect(denied.status).toBe(400);
+    expect(denied.body.error.code).toBe("PLAN_FEATURE_REQUIRED");
+
+    await request(app)
+      .post("/api/v1/subscriptions/change-plan")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ planId: "professional" });
+
+    const created = await request(app)
+      .post("/api/v1/expenses")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        amount: 2500,
+        currency: "USD",
+        category: "Software",
+        date: new Date().toISOString(),
+        vendor: "Notion",
+      });
+    expect(created.status).toBe(201);
+    expect(created.body.data.amount).toBe(2500);
+
+    const list = await request(app)
+      .get("/api/v1/expenses")
+      .set("Authorization", `Bearer ${token}`);
+    expect(list.status).toBe(200);
+    expect(list.body.data.length).toBe(1);
+
+    const deleted = await request(app)
+      .delete(`/api/v1/expenses/${created.body.data._id}`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(deleted.status).toBe(200);
+  });
+
+  it("gates reports on business plan", async () => {
+    const { token } = await register("reports@example.com");
+    const from = new Date(Date.now() - 7 * 86400000).toISOString();
+    const to = new Date().toISOString();
+
+    const denied = await request(app)
+      .get("/api/v1/reports/summary")
+      .query({ from, to })
+      .set("Authorization", `Bearer ${token}`);
+    expect(denied.status).toBe(400);
+    expect(denied.body.error.code).toBe("PLAN_FEATURE_REQUIRED");
+
+    await request(app)
+      .post("/api/v1/subscriptions/change-plan")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ planId: "business" });
+
+    const summary = await request(app)
+      .get("/api/v1/reports/summary")
+      .query({ from, to })
+      .set("Authorization", `Bearer ${token}`);
+    expect(summary.status).toBe(200);
+    expect(summary.body.data).toHaveProperty("revenue");
+    expect(summary.body.data).toHaveProperty("expenses");
+    expect(summary.body.data).toHaveProperty("net");
+  });
+});
+
 describe("health", () => {
   it("returns API info at root", async () => {
     const res = await request(app).get("/");
