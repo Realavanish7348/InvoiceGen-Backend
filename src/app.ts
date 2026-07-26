@@ -44,7 +44,12 @@ export function createApp() {
   });
 
   app.use(requestId);
-  app.use(helmet());
+  // cross-origin: Next.js (and other SPA origins) load /uploads via <img src>.
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: "cross-origin" },
+    }),
+  );
   app.use(
     cors({
       origin: env.CORS_ORIGINS.split(",").map((o) => o.trim()),
